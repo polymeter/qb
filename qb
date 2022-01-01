@@ -1,0 +1,285 @@
+#!/usr/bin/env sh
+
+# qb: Simple, single-file helper for use with borgbackup
+#
+# This is a personal attempt to unify previous borg caller scripts from a
+# number of different machines, with three main goals in mind:
+# 1. One script to rule them all
+# 2. Declarative configuration (well, mostly)
+# 3. Support for multiple independent backups / backup targets, e.g. daily
+#    backups to online storage and manually triggered backups to external HDD.
+
+# {{{ Helpers
+
+# Load target config
+load()
+{
+    if [ -z $1 ]; then
+        echo "No target specified, aborting."
+        exit 10
+    fi
+
+    # Determine target file path and verify existence
+    target_path $1
+    if [ ! -f "$TARGET_FILE" ]; then
+        echo "Target file for '$1' not found in $TARGETS_DIR."
+        echo "Tip: Use 'qb edit $1' to easily create it."
+        exit 11
+    fi
+
+    # Do the actual loading
+    source "$TARGET_FILE"
+
+    # Verify that all required variables are defined
+    local REQUIRED_VARS=(BORG_REPO BORG_PASSPHRASE)
+    local VARNAME
+    for VARNAME in "${REQUIRED_VARS[@]}"; do
+        if [ -z ${!VARNAME} ]; then
+            echo "Required variable '$VARNAME' not defined in target config. Aborting."
+            exit 12
+        fi
+    done
+
+    # Set defaults for values that are not specified
+    set_defaults
+
+    echo "Loaded target '$1'."
+
+    # Export BORG_ variables to be used by the borg executable
+    for varname in ${!BORG_*}; do
+        export $varname
+    done
+}
+
+set_defaults()
+{
+    if [ -z $ARCHIVE_PREFIX ]; then
+        ARCHIVE_PREFIX="{user}@{hostname}_"
+    fi
+    if [ -z $COMPRESSION ]; then
+        COMPRESSION="zstd,7"
+    fi
+    if [ -z $EXCLUDES ]; then
+        EXCLUDES=()
+    fi
+    if [ -z $KEEP_LAST ]; then
+        KEEP_LAST=0
+    fi
+    if [ -z $KEEP_DAILY ]; then
+        KEEP_DAILY=7
+    fi
+    if [ -z $KEEP_WEEKLY ]; then
+        KEEP_WEEKLY=4
+    fi
+    if [ -z $KEEP_MONTHLY ]; then
+        KEEP_MONTHLY=6
+    fi
+    if [ -z $KEEP_YEARLY ]; then
+        KEEP_YEARLY=0
+    fi
+}
+
+# Get target config file path by target name
+target_path()
+{
+    if [ -z "$XDG_CONFIG_HOME" ]; then
+        TARGETS_DIR="$HOME/.config/qb/targets"
+    else
+        TARGETS_DIR="$XDG_CONFIG_HOME/qb/targets"
+    fi
+    TARGET_FILE="$TARGETS_DIR/$1"
+}
+
+# }}}
+
+# {{{ Borg calls
+
+create()
+{
+    if [ -z "$PATHS" ]; then
+        echo "No backup paths specified, aborting."
+        exit 20
+    fi
+
+    local ITEM
+    for ITEM in "${EXCLUDES[@]}"; do
+        EXCLUDE_FLAGS="$EXCLUDE_FLAGS --exclude \"$ITEM\""
+    done
+
+    echo "Starting backup creation..."
+    borg create \
+        --compression $COMPRESSION \
+        --progress \
+        --stats \
+        --verbose \
+        --exclude-caches \
+        $EXCLUDE_FLAGS \
+        ::"$ARCHIVE_PREFIX{now}" \
+        "${PATHS[@]}"
+
+    CREATE_EXIT_CODE=$?
+    if [ $CREATE_EXIT_CODE -ne 0 ]; then
+        echo "Backup creation failed with error code $CREATE_EXIT_CODE."
+    else
+        echo "Backup creation completed successfully."
+    fi
+}
+
+prune()
+{
+    echo "Starting backup pruning..."
+    borg prune \
+        --prefix "$ARCHIVE_PREFIX" \
+        --progress \
+        --stats \
+        --keep-last $KEEP_LAST \
+        --keep-daily $KEEP_DAILY \
+        --keep-weekly $KEEP_WEEKLY \
+        --keep-monthly $KEEP_MONTHLY \
+        --keep-yearly $KEEP_YEARLY
+
+    PRUNE_EXIT_CODE=$?
+    if [ $PRUNE_EXIT_CODE -ne 0 ]; then
+        echo "Backup pruning failed with error code $PRUNE_EXIT_CODE."
+    else
+        echo "Backup pruning completed successfully."
+    fi
+}
+
+check()
+{
+    echo "Starting backup integrity check..."
+    borg check \
+        --progress \
+        --verbose \
+        --prefix "$ARCHIVE_PREFIX"
+
+    CHECK_EXIT_CODE=$?
+    if [ $CHECK_EXIT_CODE -ne 0 ]; then
+        echo "Backup integrity check failed with error code $CHECK_EXIT_CODE."
+    else
+        echo "Backup integrity check completed successfully."
+    fi
+}
+
+# }}}
+
+# {{{ Monitoring
+
+monitor_start()
+{
+    echo "Reporting backup start to monitoring services."
+    if [ ! -z "$HEALTHCHECKS_ID" ]; then
+        curl -s https://hc-ping.com/$HEALTHCHECKS_ID/start > /dev/null
+    fi
+}
+
+monitor_fail()
+{
+    echo "Reporting backup failure to monitoring services."
+    if [ ! -z "$HEALTHCHECKS_ID" ]; then
+        curl -s https://hc-ping.com/$HEALTHCHECKS_ID/fail > /dev/null
+    fi
+}
+
+monitor_success()
+{
+    echo "Reporting backup success to monitoring services."
+    if [ ! -z "$HEALTHCHECKS_ID" ]; then
+        curl -s https://hc-ping.com/$HEALTHCHECKS_ID > /dev/null
+    fi
+}
+
+# }}}
+
+# {{{ Inline default files
+
+create_default()
+{
+    set_defaults
+    cat > $TARGET_FILE <<EOF
+# Example qb target configuration - edit to taste!
+# Required settings
+BORG_REPO=ssh://user@example.com/backups/$(hostname)
+BORG_PASSPHRASE=
+PATHS=(
+    "\$HOME"
+)
+
+# Optional settings, given values represent default value if not specified
+# ARCHIVE_PREFIX="$ARCHIVE_PREFIX"  # See borg documentation for details
+# COMPRESSION="$COMPRESSION"
+# EXCLUDES=(
+# )
+# KEEP_LAST=$KEEP_LAST
+# KEEP_DAILY=$KEEP_DAILY
+# KEEP_WEEKLY=$KEEP_WEEKLY
+# KEEP_MONTHLY=$KEEP_MONTHLY
+# KEEP_YEARLY=$KEEP_YEARLY
+
+# Monitoring service integration
+# HEALTHCHECKS_ID=
+EOF
+}
+
+# }}}
+
+# {{{ Command line interface
+#
+case $1 in
+    check)
+        load $2
+        check
+        exit $CHECK_EXIT_CODE
+        ;;
+    create)
+        load $2
+        create
+        exit $CREATE_EXIT_CODE
+        ;;
+    edit)
+        target_path $2
+        if [ ! -f "$TARGET_FILE" ]; then
+            if [ ! -d "$TARGETS_DIR" ]; then
+                echo "No directory for target config files, creating..."
+                mkdir -p "$TARGETS_DIR"
+            fi
+            echo "No target config yet for '$2', creating new default file..."
+            create_default
+        fi
+        $EDITOR $TARGET_FILE
+        exit 0
+        ;;
+    prune)
+        load $2
+        prune
+        exit $PRUNE_EXIT_CODE
+        ;;
+    run)
+        load $2
+        monitor_start
+        create
+        prune
+        check
+        if [ $CREATE_EXIT_CODE -eq 0 -a $PRUNE_EXIT_CODE -eq 0 -a $CHECK_EXIT_CODE -eq 0 ]; then
+            monitor_success
+            echo "Backup run completed successfully."
+        else
+            monitor_fail
+            echo "Backup run completed with errors. Codes (create/prune/check): $CREATE_EXIT_CODE / $PRUNE_EXIT_CODE / $CHECK_EXIT_CODE,"
+            exit 2
+        fi
+        ;;
+    shell)
+        load $2
+        $SHELL
+        ;;
+    *)
+        echo "Unknown command: '$1'. Usage: qb <command> <target>"
+        echo "Available commands: check, create, edit, prune, run, shell."
+        exit 1
+esac
+
+# }}}
+
+# vim: foldmethod=marker
