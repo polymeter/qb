@@ -82,7 +82,9 @@ set_defaults()
 # Get target config file path by target name
 target_path()
 {
-    if [ -z "$XDG_CONFIG_HOME" ]; then
+    if [ $(id -u) -eq 0 ]; then
+        TARGETS_DIR="/etc/qb/targets"
+    elif [ -z "$XDG_CONFIG_HOME" ]; then
         TARGETS_DIR="$HOME/.config/qb/targets"
     else
         TARGETS_DIR="$XDG_CONFIG_HOME/qb/targets"
