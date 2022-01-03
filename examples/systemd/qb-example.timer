@@ -1,0 +1,16 @@
+[Unit]
+Description=qb timer for target YOUR_TARGET_HERE
+
+[Timer]
+# Modify to reference your desired target
+# Note: Using individual timer units instead of a single instanced one,
+# we can configure different timings for every qb target. The execution of
+# qb, however, is identical, so the service unit can still be instanced.
+Unit=qb@YOUR_TARGET_HERE.service
+
+# Modify to taste
+OnCalendar=20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

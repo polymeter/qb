@@ -1,0 +1,12 @@
+[Unit]
+Description=qb backup for target %i
+
+# Note: network-online.target is not available by default in --user mode,
+# but a symlink is provided (and must be placed) alongside this file.
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Modify according to your installation
+ExecStart=/usr/bin/qb run %i
