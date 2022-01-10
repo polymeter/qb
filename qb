@@ -105,7 +105,7 @@ create()
 
     local ITEM
     for ITEM in "${EXCLUDES[@]}"; do
-        EXCLUDE_FLAGS="$EXCLUDE_FLAGS --exclude \"$ITEM\""
+        EXCLUDE_FLAGS="$EXCLUDE_FLAGS --exclude $ITEM"
     done
 
     echo "Starting backup creation..."
