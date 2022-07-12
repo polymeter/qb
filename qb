@@ -11,6 +11,20 @@
 
 # {{{ Helpers
 
+# Ensure that we are online
+check_online() {
+    if [ -z $PING_HOST ]; then
+        echo "No ping host configured, skipping online check."
+        return 0
+    fi
+    for n in $(seq $PING_RETRIES); do
+        ping -c 1 -w 5 $PING_HOST >/dev/null 2>&1 && return 0
+        echo "Looks like the network is down, retrying in $PING_INTERVAL s [$n/$PING_RETRIES]"
+        sleep $PING_INTERVAL
+    done
+    exit 30
+}
+
 # Load target config
 load()
 {
@@ -76,6 +90,15 @@ set_defaults()
     fi
     if [ -z $KEEP_YEARLY ]; then
         KEEP_YEARLY=0
+    fi
+    if [ -z $PING_HOST ]; then
+        PING_HOST=
+    fi
+    if [ -z $PING_INTERVAL ]; then
+        PING_INTERVAL=5
+    fi
+    if [ -z $PING_RETRIES ]; then
+        PING_RETRIES=5
     fi
 }
 
@@ -221,6 +244,11 @@ PATHS=(
 
 # Monitoring service integration
 # HEALTHCHECKS_ID=
+
+# Network online check (simple ping)
+# PING_HOST=$PING_HOST
+# PING_INTERVAL=$PING_INTERVAL
+# PING_RETRIES=$PING_RETRIES
 EOF
 }
 
@@ -231,11 +259,13 @@ EOF
 case $1 in
     check)
         load $2
+        check_online
         check
         exit $CHECK_EXIT_CODE
         ;;
     create)
         load $2
+        check_online
         create
         exit $CREATE_EXIT_CODE
         ;;
@@ -254,11 +284,13 @@ case $1 in
         ;;
     prune)
         load $2
+        check_online
         prune
         exit $PRUNE_EXIT_CODE
         ;;
     run)
         load $2
+        check_online
         monitor_start
         create
         prune
