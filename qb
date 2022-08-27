@@ -154,7 +154,7 @@ prune()
 {
     echo "Starting backup pruning..."
     borg prune \
-        --prefix "$ARCHIVE_PREFIX" \
+        --glob-archives "$ARCHIVE_PREFIX*" \
         --progress \
         --stats \
         --keep-last $KEEP_LAST \
@@ -177,7 +177,7 @@ check()
     borg check \
         --progress \
         --verbose \
-        --prefix "$ARCHIVE_PREFIX"
+        --glob-archives "$ARCHIVE_PREFIX*"
 
     CHECK_EXIT_CODE=$?
     if [ $CHECK_EXIT_CODE -ne 0 ]; then
